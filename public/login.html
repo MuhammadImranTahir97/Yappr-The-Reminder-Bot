@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Yappr — Log in</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="login-wrap">
+    <form id="login-form" class="card">
+      <h1>Yappr</h1>
+      <p class="muted">Enter your password</p>
+      <input type="password" id="password" placeholder="Password" autofocus required />
+      <button type="submit">Log in</button>
+      <p id="error" class="error" hidden>Wrong password</p>
+    </form>
+  </main>
+  <script>
+    const form = document.getElementById('login-form');
+    const errorEl = document.getElementById('error');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      const password = document.getElementById('password').value;
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (res.ok) {
+        window.location.href = '/';
+      } else {
+        errorEl.hidden = false;
+      }
+    });
+  </script>
+</body>
+</html>

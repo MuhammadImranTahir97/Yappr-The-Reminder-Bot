@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Yappr</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app-header">
+      <h1>Yappr</h1>
+      <button id="logout" class="link-btn">Log out</button>
+    </header>
+
+    <form id="add-form" class="card">
+      <input type="text" id="title" placeholder="What do you need to do?" required />
+      <textarea id="notes" placeholder="Notes (optional)"></textarea>
+      <div class="row">
+        <label>
+          Due
+          <input type="datetime-local" id="dueAt" required />
+        </label>
+        <label>
+          Repeats
+          <select id="recurring">
+            <option value="none">Once</option>
+            <option value="daily">Daily</option>
+          </select>
+        </label>
+        <label>
+          Re-nag every (min)
+          <input type="number" id="nagMinutes" min="1" value="15" />
+        </label>
+      </div>
+      <button type="submit">Add reminder</button>
+    </form>
+
+    <section id="notif-banner" class="banner" hidden>
+      <span>Turn on browser notifications to get alerts on this laptop.</span>
+      <button id="enable-notif">Enable</button>
+    </section>
+
+    <section>
+      <h2>Active</h2>
+      <ul id="active-list" class="task-list"></ul>
+    </section>
+
+    <section>
+      <h2>Done</h2>
+      <ul id="done-list" class="task-list"></ul>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
