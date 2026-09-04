@@ -1,36 +1,52 @@
 require('dotenv').config();
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
-const session = require('express-session');
+const cookieParser = require('cookie-parser');
 const { pool, init } = require('./db');
 const scheduler = require('./scheduler');
 
 const app = express();
 app.set('trust proxy', 1);
 app.use(express.json());
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'change-me',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-  },
-}));
+app.use(cookieParser());
+
+const COOKIE_NAME = 'yappr_auth';
+
+function signAuthToken() {
+  return crypto
+    .createHmac('sha256', process.env.SESSION_SECRET || 'change-me')
+    .update('authenticated')
+    .digest('hex');
+}
+
+function isValidAuthCookie(value) {
+  if (!value) return false;
+  const expected = signAuthToken();
+  const a = Buffer.from(value);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 
 // Login endpoint (must stay open, before auth gate)
 app.post('/api/login', (req, res) => {
   const { password } = req.body;
   if (password && password === process.env.APP_PASSWORD) {
-    req.session.authenticated = true;
+    res.cookie(COOKIE_NAME, signAuthToken(), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
     return res.json({ ok: true });
   }
   return res.status(401).json({ error: 'wrong password' });
 });
 
 app.post('/api/logout', (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }));
+  res.clearCookie(COOKIE_NAME);
+  res.json({ ok: true });
 });
 
 app.get('/login.html', (req, res) => {
@@ -38,7 +54,7 @@ app.get('/login.html', (req, res) => {
 });
 
 function requireAuth(req, res, next) {
-  if (req.session.authenticated) return next();
+  if (isValidAuthCookie(req.cookies[COOKIE_NAME])) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'unauthorized' });
   return res.redirect('/login.html');
 }
@@ -112,12 +128,20 @@ app.delete('/api/tasks/:id', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-init()
-  .then(() => {
-    scheduler.start();
-    app.listen(PORT, () => console.log(`Yappr running on port ${PORT}`));
-  })
-  .catch((err) => {
-    console.error('Failed to init DB:', err);
-    process.exit(1);
-  });
+// Only runs when started directly (local dev, or self-hosting) — on Vercel
+// this module is required as a serverless handler, so this block is skipped
+// and the in-process scheduler (replaced there by a GitHub Actions cron
+// calling scripts/tick.js) never starts.
+if (require.main === module) {
+  init()
+    .then(() => {
+      scheduler.start();
+      app.listen(PORT, () => console.log(`Yappr running on port ${PORT}`));
+    })
+    .catch((err) => {
+      console.error('Failed to init DB:', err);
+      process.exit(1);
+    });
+}
+
+module.exports = app;
