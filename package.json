@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "tick": "node scripts/tick.js"
+    "tick": "node scripts/tick.js",
+    "test": "node --test"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

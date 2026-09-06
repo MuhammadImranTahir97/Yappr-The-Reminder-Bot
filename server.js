@@ -8,6 +8,8 @@ const { pool, init } = require('./db');
 const scheduler = require('./scheduler');
 const { isEnabled: pushEnabled } = require('./webpush');
 const { verifyActionToken } = require('./actionTokens');
+const { normalizeRecurring, nextOccurrence } = require('./recurrence');
+const logger = require('./logger');
 
 if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 16) {
   throw new Error('SESSION_SECRET must be set and at least 16 characters long');
@@ -316,43 +318,6 @@ app.patch('/api/tasks/:id', requireIntId, asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
-const RECURRING_PATTERN = /^(none|daily|weekly|weekdays|every:([2-9]|[1-9]\d|[12]\d\d|3[0-5]\d|36[0-5]))$/;
-
-function normalizeRecurring(value) {
-  if (typeof value !== 'string' || !RECURRING_PATTERN.test(value)) return 'none';
-  return value;
-}
-
-function isWeekday(date) {
-  const day = date.getUTCDay(); // 0 = Sunday, 6 = Saturday
-  return day !== 0 && day !== 6;
-}
-
-// Computes the next due_at strictly after `now` for a recurring task,
-// stepping forward from the task's current due_at rather than from now,
-// so a task missed for several cycles lands on the next real occurrence
-// instead of snapping to a fixed offset from whenever it happened to be
-// completed.
-function nextOccurrence(dueAt, recurring, now) {
-  const next = new Date(dueAt.getTime());
-
-  if (recurring === 'weekdays') {
-    do {
-      next.setUTCDate(next.getUTCDate() + 1);
-    } while (next <= now || !isWeekday(next));
-    return next;
-  }
-
-  let stepDays = 1;
-  if (recurring === 'weekly') stepDays = 7;
-  else if (recurring.startsWith('every:')) stepDays = Number(recurring.slice(6)) || 1;
-
-  do {
-    next.setUTCDate(next.getUTCDate() + stepDays);
-  } while (next <= now);
-  return next;
-}
-
 async function markTaskDone(id) {
   const { rows } = await pool.query(`SELECT * FROM tasks WHERE id = $1`, [id]);
   const task = rows[0];
@@ -418,7 +383,7 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error('unhandled error:', err);
+  logger.error('unhandled request error', { path: req.path, taskId: req.params.id, error: err.message });
   const status = Number.isInteger(err.status) ? err.status : 500;
   res.status(status).json({ error: status === 500 ? 'internal error' : err.message });
 });
@@ -438,10 +403,10 @@ if (require.main === module) {
       if (process.env.ENABLE_LOCAL_SCHEDULER === 'true') {
         scheduler.start();
       }
-      app.listen(PORT, () => console.log(`Yappr running on port ${PORT}`));
+      app.listen(PORT, () => logger.info(`Yappr running on port ${PORT}`));
     })
     .catch((err) => {
-      console.error('Failed to init DB:', err);
+      logger.error('Failed to init DB', { error: err.message });
       process.exit(1);
     });
 }

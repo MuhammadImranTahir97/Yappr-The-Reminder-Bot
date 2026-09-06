@@ -1,4 +1,5 @@
 const { signActionToken } = require('./actionTokens');
+const logger = require('./logger');
 
 async function sendNtfy(title, message, taskId) {
   const topic = process.env.NTFY_TOPIC;
@@ -26,7 +27,7 @@ async function sendNtfy(title, message, taskId) {
       body: message || 'Tap to open your reminders.',
     });
   } catch (err) {
-    console.error('ntfy send failed:', err.message);
+    logger.error('ntfy send failed', { taskId, error: err.message });
   }
 }
 

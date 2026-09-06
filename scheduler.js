@@ -1,10 +1,11 @@
 const { runTick } = require('./nag');
+const logger = require('./logger');
 
 async function tick() {
   try {
     await runTick();
   } catch (err) {
-    console.error('scheduler tick failed:', err.message);
+    logger.error('scheduler tick failed', { error: err.message });
   }
 }
 

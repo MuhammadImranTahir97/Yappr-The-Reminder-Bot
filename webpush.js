@@ -1,5 +1,6 @@
 const webpush = require('web-push');
 const { pool } = require('./db');
+const logger = require('./logger');
 
 let configured = false;
 
@@ -17,7 +18,7 @@ function ensureConfigured() {
   configured = true;
 }
 
-async function sendWebPush(title, body) {
+async function sendWebPush(title, body, taskId) {
   if (!isEnabled()) return;
   ensureConfigured();
 
@@ -33,8 +34,9 @@ async function sendWebPush(title, body) {
     } catch (err) {
       if (err.statusCode === 404 || err.statusCode === 410) {
         await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [sub.id]);
+        logger.info('removed expired push subscription', { taskId, subscriptionId: sub.id });
       } else {
-        console.error('web push send failed:', err.message);
+        logger.error('web push send failed', { taskId, subscriptionId: sub.id, error: err.message });
       }
     }
   }

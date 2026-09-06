@@ -135,20 +135,30 @@ setup.
 
 ## How it works
 
-- Add a task with a due time, optional daily repeat, and how often (in
-  minutes) it should re-nag you.
+- Add a task with a due time, how often (in minutes) it should re-nag you,
+  and an optional repeat: daily, weekly, weekdays only, or every N days.
+- Active tasks are grouped into **Today / Tomorrow / Later**, and each one
+  shows when its next nag will fire.
 - Every 5 minutes, a GitHub Actions workflow (`scripts/tick.js`) checks for
   anything due and not done, and sends a push to your ntfy topic (plus a
   Web Push notification, if configured) if enough time has passed since the
-  last nag.
+  last nag. It also deletes completed one-off tasks whose due date is 30+
+  days old, and (if `QUIET_HOURS_START`/`QUIET_HOURS_END` are set) skips
+  nagging during that window without disturbing the task's own schedule.
 - The ntfy notification includes **Done** and **Snooze 15m** action buttons
   that call the API directly, using a one-time signed token scoped to that
-  task and action - no need to open the app to act on a reminder.
+  task and action - no need to open the app to act on a reminder. The web
+  UI also has Edit and Snooze (10/30/60m) on every active task.
 - The web page (when open) does its own check every 60s (paused while the
   tab is hidden) and fires a native browser notification in sync with the
   same due tasks.
-- Marking a one-off task done just marks it done. Marking a daily task done
-  rolls its due time forward in whole-day steps until it's back in the
-  future (so a task missed for 3 days lands on tomorrow, not still overdue).
+- Marking a one-off task done just marks it done. Marking a recurring task
+  done advances its due time to the next real occurrence in the future -
+  so a daily task missed for 3 days lands on tomorrow (not still overdue),
+  and a "weekdays" task skips straight past any weekend in between.
 - Logins use a signed cookie (no server-side session storage), which is what
   makes the web app safe to run on Vercel's serverless functions.
+- `GET /api/health` (no login needed) returns `{ ok, tasksDue }` - a quick
+  way to check the app and its DB connection are actually alive.
+- `npm test` runs the test suite (`node --test`) - covers the recurring-task
+  date math and the ntfy action-button token signing/verification.

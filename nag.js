@@ -35,7 +35,7 @@ async function runTick() {
       const title = `Reminder: ${task.title}`;
       const body = task.notes || 'Tap to mark it done.';
       await sendNtfy(title, body, task.id);
-      await sendWebPush(title, body);
+      await sendWebPush(title, body, task.id);
       await pool.query(`UPDATE tasks SET last_nagged_at = now() WHERE id = $1`, [task.id]);
     }
   }

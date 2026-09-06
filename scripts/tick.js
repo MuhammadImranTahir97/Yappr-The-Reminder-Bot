@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { pool, init } = require('../db');
 const { runTick } = require('../nag');
+const logger = require('../logger');
 
 async function tick() {
   await init();
@@ -10,6 +11,6 @@ async function tick() {
 tick()
   .then(() => pool.end())
   .catch((err) => {
-    console.error('tick failed:', err.message);
+    logger.error('tick failed', { error: err.message });
     return pool.end().finally(() => process.exit(1));
   });
