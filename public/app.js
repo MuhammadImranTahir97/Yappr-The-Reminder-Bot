@@ -140,25 +140,51 @@ function setupNotifications() {
     const perm = await Notification.requestPermission();
     if (perm === 'granted') notifBanner.hidden = true;
   });
-
-  setInterval(async () => {
-    if (Notification.permission !== 'granted') return;
-    const due = await api('/api/tasks/due');
-    if (!due) return;
-    for (const task of due) {
-      const naggedAt = task.last_nagged_at ? new Date(task.last_nagged_at).getTime() : 0;
-      if (naggedAt > (lastSeenNag[task.id] || 0)) {
-        new Notification(`Reminder: ${task.title}`, {
-          body: task.notes || 'Tap to mark it done.',
-          tag: `task-${task.id}`,
-        });
-        lastSeenNag[task.id] = naggedAt;
-        saveLastSeenNag();
-      }
-    }
-  }, 20 * 1000);
 }
+
+async function checkDue() {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const due = await api('/api/tasks/due');
+  if (!due) return;
+  for (const task of due) {
+    const naggedAt = task.last_nagged_at ? new Date(task.last_nagged_at).getTime() : 0;
+    if (naggedAt > (lastSeenNag[task.id] || 0)) {
+      new Notification(`Reminder: ${task.title}`, {
+        body: task.notes || 'Tap to mark it done.',
+        tag: `task-${task.id}`,
+      });
+      lastSeenNag[task.id] = naggedAt;
+      saveLastSeenNag();
+    }
+  }
+}
+
+// Polling pauses while the tab is hidden and resumes (with an immediate
+// refresh) when it becomes visible again, instead of burning serverless
+// invocations on a background tab nobody is looking at.
+let pollTimers = null;
+
+function startPolling() {
+  if (pollTimers) return;
+  pollTimers = [setInterval(checkDue, 60 * 1000), setInterval(load, 60 * 1000)];
+}
+
+function stopPolling() {
+  if (!pollTimers) return;
+  pollTimers.forEach(clearInterval);
+  pollTimers = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    load();
+    checkDue();
+    startPolling();
+  }
+});
 
 load();
 setupNotifications();
-setInterval(load, 60 * 1000);
+startPolling();

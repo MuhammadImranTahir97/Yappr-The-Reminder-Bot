@@ -81,6 +81,16 @@ activity at all — an occasional commit (or just using the app, which doesn't
 touch the repo) won't trigger this; if reminders ever silently stop, check
 the Actions tab and re-enable the workflow there if needed.
 
+**GitHub's cron is best-effort, not exact.** The workflow is configured to
+run every 5 minutes, but GitHub explicitly reserves the right to delay or
+skip scheduled runs under load, especially on free-tier repos — in practice
+this project has seen gaps of 2+ hours between runs instead of 5 minutes.
+Reminders may arrive later than the `nagMinutes` setting implies. There's no
+free way to force GitHub to run more punctually; if reliable sub-5-minute
+delivery ever matters, the fix is an external scheduler (e.g. a free cron
+service) hitting a tick endpoint instead of relying on GitHub Actions'
+`schedule` trigger.
+
 ## How it works
 
 - Add a task with a due time, optional daily repeat, and how often (in
