@@ -1,9 +1,20 @@
-const activeList = document.getElementById('active-list');
+const todayList = document.getElementById('today-list');
+const tomorrowList = document.getElementById('tomorrow-list');
+const laterList = document.getElementById('later-list');
 const doneList = document.getElementById('done-list');
 const addForm = document.getElementById('add-form');
 const notifBanner = document.getElementById('notif-banner');
 const enableNotifBtn = document.getElementById('enable-notif');
 const logoutBtn = document.getElementById('logout');
+const recurringSelect = document.getElementById('recurring');
+const everyNLabel = document.getElementById('every-n-label');
+const everyNDaysInput = document.getElementById('everyNDays');
+const titleInput = document.getElementById('title');
+const notesInput = document.getElementById('notes');
+const dueAtInput = document.getElementById('dueAt');
+const nagMinutesInput = document.getElementById('nagMinutes');
+const submitBtn = document.getElementById('submit-btn');
+const cancelEditBtn = document.getElementById('cancel-edit');
 
 const NAG_SEEN_KEY = 'nag-last-seen';
 const lastSeenNag = JSON.parse(localStorage.getItem(NAG_SEEN_KEY) || '{}');
@@ -14,6 +25,18 @@ function saveLastSeenNag() {
 
 function fmt(dt) {
   return new Date(dt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function fmtTime(dt) {
+  return new Date(dt).toLocaleString([], { timeStyle: 'short' });
+}
+
+function recurringLabel(recurring) {
+  if (recurring === 'daily') return 'repeats daily';
+  if (recurring === 'weekly') return 'repeats weekly';
+  if (recurring === 'weekdays') return 'repeats weekdays';
+  if (recurring && recurring.startsWith('every:')) return `repeats every ${recurring.slice(6)} days`;
+  return null;
 }
 
 async function api(path, options) {
@@ -27,6 +50,40 @@ async function api(path, options) {
   }
   if (!res.ok) throw new Error('request failed');
   return res.json();
+}
+
+let editingTaskId = null;
+
+function startEdit(task) {
+  editingTaskId = task.id;
+  titleInput.value = task.title;
+  notesInput.value = task.notes || '';
+
+  const d = new Date(task.due_at);
+  const pad = (n) => String(n).padStart(2, '0');
+  dueAtInput.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  if (task.recurring && task.recurring.startsWith('every:')) {
+    recurringSelect.value = 'every';
+    everyNDaysInput.value = task.recurring.slice(6);
+  } else {
+    recurringSelect.value = task.recurring || 'none';
+  }
+  everyNLabel.hidden = recurringSelect.value !== 'every';
+
+  nagMinutesInput.value = task.nag_minutes;
+  submitBtn.textContent = 'Save changes';
+  cancelEditBtn.hidden = false;
+  addForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelEdit() {
+  editingTaskId = null;
+  addForm.reset();
+  nagMinutesInput.value = 15;
+  everyNLabel.hidden = true;
+  submitBtn.textContent = 'Add reminder';
+  cancelEditBtn.hidden = true;
 }
 
 function renderTask(task) {
@@ -53,8 +110,15 @@ function renderTask(task) {
   const meta = document.createElement('div');
   meta.className = 'task-meta';
   const parts = [`Due ${fmt(task.due_at)}`];
-  if (task.recurring === 'daily') parts.push('repeats daily');
-  if (!task.done) parts.push(`nags every ${task.nag_minutes}m`);
+  const repeatLabel = recurringLabel(task.recurring);
+  if (repeatLabel) parts.push(repeatLabel);
+  if (!task.done) {
+    parts.push(`nags every ${task.nag_minutes}m`);
+    const nextNagAt = task.last_nagged_at
+      ? new Date(task.last_nagged_at).getTime() + task.nag_minutes * 60 * 1000
+      : new Date(task.due_at).getTime();
+    parts.push(`next nag ${fmtTime(nextNagAt)}`);
+  }
   meta.textContent = parts.join(' · ');
   main.appendChild(meta);
 
@@ -72,11 +136,37 @@ function renderTask(task) {
       load();
     };
     actions.appendChild(doneBtn);
+
+    const editBtn = document.createElement('button');
+    editBtn.textContent = 'Edit';
+    editBtn.onclick = () => startEdit(task);
+    actions.appendChild(editBtn);
+
+    const snoozeSelect = document.createElement('select');
+    snoozeSelect.className = 'snooze-select';
+    snoozeSelect.innerHTML = `
+      <option value="">Snooze…</option>
+      <option value="10">10m</option>
+      <option value="30">30m</option>
+      <option value="60">60m</option>
+    `;
+    snoozeSelect.onchange = async () => {
+      const minutes = Number(snoozeSelect.value);
+      if (minutes) {
+        await api(`/api/tasks/${task.id}/snooze`, {
+          method: 'PATCH',
+          body: JSON.stringify({ minutes }),
+        });
+        load();
+      }
+    };
+    actions.appendChild(snoozeSelect);
   }
 
   const delBtn = document.createElement('button');
   delBtn.textContent = 'Delete';
   delBtn.onclick = async () => {
+    if (editingTaskId === task.id) cancelEdit();
     await api(`/api/tasks/${task.id}`, { method: 'DELETE' });
     load();
   };
@@ -86,42 +176,75 @@ function renderTask(task) {
   return li;
 }
 
+function startOfDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 async function load() {
   const tasks = await api('/api/tasks');
   if (!tasks) return;
-  activeList.innerHTML = '';
+  todayList.innerHTML = '';
+  tomorrowList.innerHTML = '';
+  laterList.innerHTML = '';
   doneList.innerHTML = '';
+
+  const today = startOfDay(new Date());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const dayAfter = new Date(tomorrow);
+  dayAfter.setDate(dayAfter.getDate() + 1);
+
+  let activeCount = 0;
   for (const task of tasks) {
-    (task.done ? doneList : activeList).appendChild(renderTask(task));
+    if (task.done) {
+      doneList.appendChild(renderTask(task));
+      continue;
+    }
+    activeCount += 1;
+    const dueDate = new Date(task.due_at);
+    const target = dueDate < tomorrow ? todayList : dueDate < dayAfter ? tomorrowList : laterList;
+    target.appendChild(renderTask(task));
   }
-  if (activeList.children.length === 0) {
-    activeList.innerHTML = '<li class="muted">Nothing active. Nice.</li>';
+
+  if (activeCount === 0) {
+    todayList.innerHTML = '<li class="muted">Nothing active. Nice.</li>';
   }
 }
 
+recurringSelect.addEventListener('change', () => {
+  everyNLabel.hidden = recurringSelect.value !== 'every';
+});
+
 addForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const title = document.getElementById('title').value;
-  const notes = document.getElementById('notes').value;
-  const dueAtLocal = document.getElementById('dueAt').value;
-  const recurring = document.getElementById('recurring').value;
-  const nagMinutes = Number(document.getElementById('nagMinutes').value) || 15;
+  const title = titleInput.value;
+  const notes = notesInput.value;
+  const dueAtLocal = dueAtInput.value;
+  const recurring =
+    recurringSelect.value === 'every' ? `every:${Number(everyNDaysInput.value) || 2}` : recurringSelect.value;
+  const nagMinutes = Number(nagMinutesInput.value) || 15;
 
-  await api('/api/tasks', {
-    method: 'POST',
-    body: JSON.stringify({
-      title,
-      notes,
-      dueAt: new Date(dueAtLocal).toISOString(),
-      recurring,
-      nagMinutes,
-    }),
+  const body = JSON.stringify({
+    title,
+    notes,
+    dueAt: new Date(dueAtLocal).toISOString(),
+    recurring,
+    nagMinutes,
   });
 
-  addForm.reset();
-  document.getElementById('nagMinutes').value = 15;
+  if (editingTaskId) {
+    await api(`/api/tasks/${editingTaskId}`, { method: 'PATCH', body });
+  } else {
+    await api('/api/tasks', { method: 'POST', body });
+  }
+
+  cancelEdit();
   load();
 });
+
+cancelEditBtn.addEventListener('click', cancelEdit);
 
 logoutBtn.addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' });

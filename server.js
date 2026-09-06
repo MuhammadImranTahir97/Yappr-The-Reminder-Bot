@@ -130,6 +130,28 @@ app.get('/login.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.js'));
 });
 
+// PWA assets: none of these carry anything sensitive (app name, icons,
+// theme color, a no-op service worker), and <link rel="manifest"> fetches
+// don't send cookies by default (they're same-origin but credential-less
+// unless crossorigin="use-credentials" is set) - so gating these behind
+// requireAuth just makes the manifest 302 to /login.html and fail to parse
+// as JSON. Simpler to serve them openly.
+app.get('/manifest.webmanifest', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'manifest.webmanifest'));
+});
+
+app.get('/sw.js', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+
+app.get('/icon-192.png', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'icon-192.png'));
+});
+
+app.get('/icon-512.png', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'icon-512.png'));
+});
+
 // Token-gated GET routes so ntfy's Actions buttons (which only fire plain
 // HTTP requests, no cookies) can mark a task done or snooze it directly
 // from the notification, without needing to open and log into the app.
@@ -233,28 +255,115 @@ app.post('/api/tasks', asyncHandler(async (req, res) => {
       title.trim(),
       notes || '',
       parsedDueAt.toISOString(),
-      recurring === 'daily' ? 'daily' : 'none',
+      normalizeRecurring(recurring),
       nagMins,
     ]
   );
   res.json(rows[0]);
 }));
 
+app.patch('/api/tasks/:id', requireIntId, asyncHandler(async (req, res) => {
+  const { rows: existingRows } = await pool.query(`SELECT * FROM tasks WHERE id = $1`, [req.params.id]);
+  const existing = existingRows[0];
+  if (!existing) return res.status(404).json({ error: 'not found' });
+
+  const { title, notes, dueAt, recurring, nagMinutes } = req.body;
+
+  let title2 = existing.title;
+  if (title !== undefined) {
+    if (typeof title !== 'string' || title.trim().length < 1 || title.length > 200) {
+      return res.status(400).json({ error: 'title must be 1-200 characters' });
+    }
+    title2 = title.trim();
+  }
+
+  let notes2 = existing.notes;
+  if (notes !== undefined) {
+    if (notes !== null && (typeof notes !== 'string' || notes.length > 2000)) {
+      return res.status(400).json({ error: 'notes must be a string up to 2000 characters' });
+    }
+    notes2 = notes || '';
+  }
+
+  let dueAt2 = existing.due_at;
+  if (dueAt !== undefined) {
+    const parsed = new Date(dueAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return res.status(400).json({ error: 'dueAt must be a valid date' });
+    }
+    dueAt2 = parsed.toISOString();
+  }
+
+  let recurring2 = existing.recurring;
+  if (recurring !== undefined) {
+    recurring2 = normalizeRecurring(recurring);
+  }
+
+  let nagMins2 = existing.nag_minutes;
+  if (nagMinutes !== undefined && nagMinutes !== null) {
+    const n = Number(nagMinutes);
+    if (!Number.isInteger(n) || n < 1 || n > 1440) {
+      return res.status(400).json({ error: 'nagMinutes must be an integer between 1 and 1440' });
+    }
+    nagMins2 = n;
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE tasks SET title = $2, notes = $3, due_at = $4, recurring = $5, nag_minutes = $6
+     WHERE id = $1 RETURNING *`,
+    [req.params.id, title2, notes2, dueAt2, recurring2, nagMins2]
+  );
+  res.json(rows[0]);
+}));
+
+const RECURRING_PATTERN = /^(none|daily|weekly|weekdays|every:([2-9]|[1-9]\d|[12]\d\d|3[0-5]\d|36[0-5]))$/;
+
+function normalizeRecurring(value) {
+  if (typeof value !== 'string' || !RECURRING_PATTERN.test(value)) return 'none';
+  return value;
+}
+
+function isWeekday(date) {
+  const day = date.getUTCDay(); // 0 = Sunday, 6 = Saturday
+  return day !== 0 && day !== 6;
+}
+
+// Computes the next due_at strictly after `now` for a recurring task,
+// stepping forward from the task's current due_at rather than from now,
+// so a task missed for several cycles lands on the next real occurrence
+// instead of snapping to a fixed offset from whenever it happened to be
+// completed.
+function nextOccurrence(dueAt, recurring, now) {
+  const next = new Date(dueAt.getTime());
+
+  if (recurring === 'weekdays') {
+    do {
+      next.setUTCDate(next.getUTCDate() + 1);
+    } while (next <= now || !isWeekday(next));
+    return next;
+  }
+
+  let stepDays = 1;
+  if (recurring === 'weekly') stepDays = 7;
+  else if (recurring.startsWith('every:')) stepDays = Number(recurring.slice(6)) || 1;
+
+  do {
+    next.setUTCDate(next.getUTCDate() + stepDays);
+  } while (next <= now);
+  return next;
+}
+
 async function markTaskDone(id) {
   const { rows } = await pool.query(`SELECT * FROM tasks WHERE id = $1`, [id]);
   const task = rows[0];
   if (!task) return null;
 
-  if (task.recurring === 'daily') {
+  if (task.recurring && task.recurring !== 'none') {
+    const nextDueAt = nextOccurrence(new Date(task.due_at), task.recurring, new Date());
     const { rows: updated } = await pool.query(
-      `UPDATE tasks
-       SET due_at = due_at + (
-             GREATEST(FLOOR(EXTRACT(EPOCH FROM (now() - due_at)) / 86400), 0) + 1
-           ) * interval '1 day',
-           done = false,
-           last_nagged_at = NULL
+      `UPDATE tasks SET due_at = $2, done = false, last_nagged_at = NULL
        WHERE id = $1 RETURNING *`,
-      [id]
+      [id, nextDueAt.toISOString()]
     );
     return updated[0];
   }
@@ -280,6 +389,15 @@ app.patch('/api/tasks/:id/done', requireIntId, asyncHandler(async (req, res) => 
   res.json(updated);
 }));
 
+app.patch('/api/tasks/:id/snooze', requireIntId, asyncHandler(async (req, res) => {
+  const minutes = Number(req.body && req.body.minutes);
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+    return res.status(400).json({ error: 'minutes must be an integer between 1 and 1440' });
+  }
+  const updated = await snoozeTask(req.params.id, minutes);
+  if (!updated) return res.status(404).json({ error: 'not found' });
+  res.json(updated);
+}));
 
 app.patch('/api/tasks/:id/undone', requireIntId, asyncHandler(async (req, res) => {
   const { id } = req.params;

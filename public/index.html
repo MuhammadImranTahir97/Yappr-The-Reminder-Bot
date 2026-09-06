@@ -32,14 +32,24 @@
           <select id="recurring">
             <option value="none">Once</option>
             <option value="daily">Daily</option>
+            <option value="weekdays">Weekdays</option>
+            <option value="weekly">Weekly</option>
+            <option value="every">Every N days</option>
           </select>
+        </label>
+        <label id="every-n-label" hidden>
+          Every
+          <input type="number" id="everyNDays" min="2" max="365" value="3" /> days
         </label>
         <label>
           Re-nag every (min)
           <input type="number" id="nagMinutes" min="1" value="15" />
         </label>
       </div>
-      <button type="submit">Add reminder</button>
+      <div class="row">
+        <button type="submit" id="submit-btn">Add reminder</button>
+        <button type="button" id="cancel-edit" hidden class="link-btn">Cancel</button>
+      </div>
     </form>
 
     <section id="notif-banner" class="banner" hidden>
@@ -48,8 +58,18 @@
     </section>
 
     <section>
-      <h2>Active</h2>
-      <ul id="active-list" class="task-list"></ul>
+      <h2>Today</h2>
+      <ul id="today-list" class="task-list"></ul>
+    </section>
+
+    <section>
+      <h2>Tomorrow</h2>
+      <ul id="tomorrow-list" class="task-list"></ul>
+    </section>
+
+    <section>
+      <h2>Later</h2>
+      <ul id="later-list" class="task-list"></ul>
     </section>
 
     <section>
