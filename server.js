@@ -84,19 +84,25 @@ function requireAuth(req, res, next) {
 app.use(requireAuth);
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/api/tasks', async (req, res) => {
+function asyncHandler(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+
+app.get('/api/tasks', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(`SELECT * FROM tasks ORDER BY done ASC, due_at ASC`);
   res.json(rows);
-});
+}));
 
-app.get('/api/tasks/due', async (req, res) => {
+app.get('/api/tasks/due', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT * FROM tasks WHERE done = false AND due_at <= now() ORDER BY due_at ASC`
   );
   res.json(rows);
-});
+}));
 
-app.post('/api/tasks', async (req, res) => {
+app.post('/api/tasks', asyncHandler(async (req, res) => {
   const { title, notes, dueAt, recurring, nagMinutes } = req.body;
   if (!title || !dueAt) return res.status(400).json({ error: 'title and dueAt required' });
   const { rows } = await pool.query(
@@ -111,9 +117,9 @@ app.post('/api/tasks', async (req, res) => {
     ]
   );
   res.json(rows[0]);
-});
+}));
 
-app.patch('/api/tasks/:id/done', async (req, res) => {
+app.patch('/api/tasks/:id/done', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { rows } = await pool.query(`SELECT * FROM tasks WHERE id = $1`, [id]);
   const task = rows[0];
@@ -121,7 +127,12 @@ app.patch('/api/tasks/:id/done', async (req, res) => {
 
   if (task.recurring === 'daily') {
     const { rows: updated } = await pool.query(
-      `UPDATE tasks SET due_at = due_at + interval '1 day', done = false, last_nagged_at = NULL
+      `UPDATE tasks
+       SET due_at = due_at + (
+             GREATEST(FLOOR(EXTRACT(EPOCH FROM (now() - due_at)) / 86400), 0) + 1
+           ) * interval '1 day',
+           done = false,
+           last_nagged_at = NULL
        WHERE id = $1 RETURNING *`,
       [id]
     );
@@ -132,20 +143,29 @@ app.patch('/api/tasks/:id/done', async (req, res) => {
     [id]
   );
   res.json(updated[0]);
-});
+}));
 
-app.patch('/api/tasks/:id/undone', async (req, res) => {
+app.patch('/api/tasks/:id/undone', asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { rows } = await pool.query(
     `UPDATE tasks SET done = false, last_nagged_at = NULL WHERE id = $1 RETURNING *`,
     [id]
   );
   res.json(rows[0]);
-});
+}));
 
-app.delete('/api/tasks/:id', async (req, res) => {
+app.delete('/api/tasks/:id', asyncHandler(async (req, res) => {
   await pool.query(`DELETE FROM tasks WHERE id = $1`, [req.params.id]);
   res.json({ ok: true });
+}));
+
+app.use((req, res) => {
+  res.status(404).json({ error: 'not found' });
+});
+
+app.use((err, req, res, next) => {
+  console.error('unhandled error:', err);
+  res.status(500).json({ error: 'internal error' });
 });
 
 const PORT = process.env.PORT || 3000;
