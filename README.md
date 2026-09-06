@@ -55,7 +55,13 @@ credit card:
 2. Go to [vercel.com](https://vercel.com), sign up (GitHub login is easiest),
    and click **Add New → Project**, then import this repo.
 3. Vercel will detect `vercel.json` and deploy it as-is — no build/start
-   command changes needed.
+   command changes needed. `vercel.json` intentionally still uses the legacy
+   `builds`/`routes` form (with its "unused Build and Development Settings"
+   build warning) rather than the modern `functions`/`rewrites` form -
+   tested that migration on a preview branch and it broke `POST /api/login`
+   in production (requests fell through to the login-page redirect instead
+   of reaching the route), so it was reverted. The legacy form works
+   correctly; the warning is cosmetic.
 4. In the project's **Settings → Environment Variables**, add:
    - `DATABASE_URL` — same as local, but change the port from `5432` to
      `6543` (Supabase's Transaction pooler). Vercel runs many short-lived

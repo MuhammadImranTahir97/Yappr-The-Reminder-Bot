@@ -117,6 +117,13 @@ app.get('/style.css', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'style.css'));
 });
 
+app.get('/api/health', asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*) FROM tasks WHERE done = false AND due_at <= now()`
+  );
+  res.json({ ok: true, tasksDue: Number(rows[0].count) });
+}));
+
 app.get('/login.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.js'));
 });
