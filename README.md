@@ -57,8 +57,12 @@ credit card:
 3. Vercel will detect `vercel.json` and deploy it as-is — no build/start
    command changes needed.
 4. In the project's **Settings → Environment Variables**, add:
-   - `DATABASE_URL`, `APP_PASSWORD`, `SESSION_SECRET`, `NTFY_TOPIC` — same
-     values as your local `.env`.
+   - `DATABASE_URL` — same as local, but change the port from `5432` to
+     `6543` (Supabase's Transaction pooler). Vercel runs many short-lived
+     serverless invocations, and the `5432` Session pooler can run out of
+     connections under that load; `6543` is built for exactly this.
+   - `APP_PASSWORD`, `SESSION_SECRET`, `NTFY_TOPIC` — same values as your
+     local `.env`.
 5. Deploy. Vercel gives you a permanent URL like `https://yappr-xxxx.vercel.app`
    — open that on your iPhone and laptop.
 

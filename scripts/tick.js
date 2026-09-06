@@ -1,8 +1,9 @@
 require('dotenv').config();
-const { pool } = require('../db');
+const { pool, init } = require('../db');
 const { sendNtfy } = require('../ntfy');
 
 async function tick() {
+  await init();
   const { rows } = await pool.query(
     `SELECT * FROM tasks WHERE done = false AND due_at <= now()`
   );

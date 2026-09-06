@@ -6,24 +6,42 @@ const cookieParser = require('cookie-parser');
 const { pool, init } = require('./db');
 const scheduler = require('./scheduler');
 
+if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 16) {
+  throw new Error('SESSION_SECRET must be set and at least 16 characters long');
+}
+if (!process.env.APP_PASSWORD) {
+  throw new Error('APP_PASSWORD must be set');
+}
+
 const app = express();
 app.set('trust proxy', 1);
 app.use(express.json());
 app.use(cookieParser());
 
 const COOKIE_NAME = 'yappr_auth';
+const TOKEN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function hmacFor(issuedAt) {
+  return crypto
+    .createHmac('sha256', process.env.SESSION_SECRET)
+    .update(String(issuedAt))
+    .digest('hex');
+}
 
 function signAuthToken() {
-  return crypto
-    .createHmac('sha256', process.env.SESSION_SECRET || 'change-me')
-    .update('authenticated')
-    .digest('hex');
+  const issuedAt = Date.now();
+  return `${issuedAt}.${hmacFor(issuedAt)}`;
 }
 
 function isValidAuthCookie(value) {
   if (!value) return false;
-  const expected = signAuthToken();
-  const a = Buffer.from(value);
+  const [issuedAtStr, mac] = value.split('.');
+  const issuedAt = Number(issuedAtStr);
+  if (!issuedAtStr || !mac || !Number.isFinite(issuedAt)) return false;
+  if (Date.now() - issuedAt > TOKEN_MAX_AGE_MS) return false;
+
+  const expected = hmacFor(issuedAt);
+  const a = Buffer.from(mac);
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
@@ -37,7 +55,7 @@ app.post('/api/login', (req, res) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
+      maxAge: TOKEN_MAX_AGE_MS,
     });
     return res.json({ ok: true });
   }
@@ -51,6 +69,10 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/login.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/style.css', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'style.css'));
 });
 
 function requireAuth(req, res, next) {
