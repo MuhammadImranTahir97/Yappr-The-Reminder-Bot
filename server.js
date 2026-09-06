@@ -6,6 +6,8 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const { pool, init } = require('./db');
 const scheduler = require('./scheduler');
+const { isEnabled: pushEnabled } = require('./webpush');
+const { verifyActionToken } = require('./actionTokens');
 
 if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 16) {
   throw new Error('SESSION_SECRET must be set and at least 16 characters long');
@@ -128,6 +130,29 @@ app.get('/login.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.js'));
 });
 
+// Token-gated GET routes so ntfy's Actions buttons (which only fire plain
+// HTTP requests, no cookies) can mark a task done or snooze it directly
+// from the notification, without needing to open and log into the app.
+// Deliberately registered before requireAuth - the token itself is the
+// authorization, scoped to exactly one task and one action.
+app.get('/api/tasks/:id/done', requireIntId, asyncHandler(async (req, res) => {
+  if (!verifyActionToken(req.query.t, req.params.id, 'done')) {
+    return res.status(403).json({ error: 'invalid or missing token' });
+  }
+  const updated = await markTaskDone(req.params.id);
+  if (!updated) return res.status(404).json({ error: 'not found' });
+  res.json(updated);
+}));
+
+app.get('/api/tasks/:id/snooze', requireIntId, asyncHandler(async (req, res) => {
+  if (!verifyActionToken(req.query.t, req.params.id, 'snooze')) {
+    return res.status(403).json({ error: 'invalid or missing token' });
+  }
+  const updated = await snoozeTask(req.params.id, 15);
+  if (!updated) return res.status(404).json({ error: 'not found' });
+  res.json(updated);
+}));
+
 function requireAuth(req, res, next) {
   if (isValidAuthCookie(req.cookies[COOKIE_NAME])) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'unauthorized' });
@@ -141,6 +166,32 @@ function requireIntId(req, res, next) {
   if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'invalid id' });
   next();
 }
+
+app.get('/api/push/vapid-public-key', (req, res) => {
+  if (!pushEnabled()) return res.status(404).json({ error: 'web push not configured' });
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
+});
+
+app.post('/api/push/subscribe', asyncHandler(async (req, res) => {
+  const { endpoint, keys } = req.body || {};
+  if (!endpoint || !keys || !keys.p256dh || !keys.auth) {
+    return res.status(400).json({ error: 'invalid subscription' });
+  }
+  await pool.query(
+    `INSERT INTO push_subscriptions (endpoint, p256dh, auth)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+    [endpoint, keys.p256dh, keys.auth]
+  );
+  res.json({ ok: true });
+}));
+
+app.post('/api/push/unsubscribe', asyncHandler(async (req, res) => {
+  const { endpoint } = req.body || {};
+  if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+  await pool.query(`DELETE FROM push_subscriptions WHERE endpoint = $1`, [endpoint]);
+  res.json({ ok: true });
+}));
 
 app.get('/api/tasks', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(`SELECT * FROM tasks ORDER BY done ASC, due_at ASC`);
@@ -189,11 +240,10 @@ app.post('/api/tasks', asyncHandler(async (req, res) => {
   res.json(rows[0]);
 }));
 
-app.patch('/api/tasks/:id/done', requireIntId, asyncHandler(async (req, res) => {
-  const { id } = req.params;
+async function markTaskDone(id) {
   const { rows } = await pool.query(`SELECT * FROM tasks WHERE id = $1`, [id]);
   const task = rows[0];
-  if (!task) return res.status(404).json({ error: 'not found' });
+  if (!task) return null;
 
   if (task.recurring === 'daily') {
     const { rows: updated } = await pool.query(
@@ -206,14 +256,30 @@ app.patch('/api/tasks/:id/done', requireIntId, asyncHandler(async (req, res) => 
        WHERE id = $1 RETURNING *`,
       [id]
     );
-    return res.json(updated[0]);
+    return updated[0];
   }
   const { rows: updated } = await pool.query(
     `UPDATE tasks SET done = true WHERE id = $1 RETURNING *`,
     [id]
   );
-  res.json(updated[0]);
+  return updated[0];
+}
+
+async function snoozeTask(id, minutes) {
+  const { rows } = await pool.query(
+    `UPDATE tasks SET due_at = now() + ($2 || ' minutes')::interval, last_nagged_at = NULL
+     WHERE id = $1 RETURNING *`,
+    [id, minutes]
+  );
+  return rows[0] || null;
+}
+
+app.patch('/api/tasks/:id/done', requireIntId, asyncHandler(async (req, res) => {
+  const updated = await markTaskDone(req.params.id);
+  if (!updated) return res.status(404).json({ error: 'not found' });
+  res.json(updated);
 }));
+
 
 app.patch('/api/tasks/:id/undone', requireIntId, asyncHandler(async (req, res) => {
   const { id } = req.params;

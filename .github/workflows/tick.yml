@@ -18,8 +18,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --omit=dev
       - run: node scripts/tick.js
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}

@@ -128,17 +128,52 @@ logoutBtn.addEventListener('click', async () => {
   window.location.href = '/login.html';
 });
 
+function urlBase64ToUint8Array(base64) {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const base64Safe = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64Safe);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+// Native Web Push (iOS 16.4+ / installed PWAs support this) alongside ntfy,
+// which stays as the fallback since it needs no browser permission dance.
+async function subscribeToPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const keyRes = await fetch('/api/push/vapid-public-key');
+    if (!keyRes.ok) return; // not configured server-side, skip silently
+    const { publicKey } = await keyRes.json();
+
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    }
+    await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify(sub) });
+  } catch (err) {
+    console.error('push subscription failed:', err);
+  }
+}
+
 // Browser notifications, synced to the same nag schedule as ntfy
 function setupNotifications() {
   if (!('Notification' in window)) return;
 
   if (Notification.permission === 'default') {
     notifBanner.hidden = false;
+  } else if (Notification.permission === 'granted') {
+    subscribeToPush();
   }
 
   enableNotifBtn.addEventListener('click', async () => {
     const perm = await Notification.requestPermission();
-    if (perm === 'granted') notifBanner.hidden = true;
+    if (perm === 'granted') {
+      notifBanner.hidden = true;
+      subscribeToPush();
+    }
   });
 }
 
@@ -184,6 +219,12 @@ document.addEventListener('visibilitychange', () => {
     startPolling();
   }
 });
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch((err) => {
+    console.error('service worker registration failed:', err);
+  });
+}
 
 load();
 setupNotifications();

@@ -69,6 +69,11 @@ credit card:
      connections under that load; `6543` is built for exactly this.
    - `APP_PASSWORD`, `SESSION_SECRET`, `NTFY_TOPIC` — same values as your
      local `.env`.
+   - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` — optional, only
+     needed for native Web Push (see "Web Push" below). Leave unset to skip it.
+   - `PUBLIC_BASE_URL` — this deployment's own URL (e.g.
+     `https://yappr-xxxx.vercel.app`, no trailing slash). You'll know this
+     only after the first deploy, so set it after step 5 and redeploy once.
 5. Deploy. Vercel gives you a permanent URL like `https://yappr-xxxx.vercel.app`
    — open that on your iPhone and laptop.
 
@@ -76,7 +81,11 @@ credit card:
 
 1. In your GitHub repo: **Settings → Secrets and variables → Actions → New
    repository secret**.
-2. Add two secrets: `DATABASE_URL` and `NTFY_TOPIC` (same values as above).
+2. Add: `DATABASE_URL`, `NTFY_TOPIC`, `SESSION_SECRET`, and `PUBLIC_BASE_URL`
+   (same values as on Vercel). `SESSION_SECRET` is needed here too - it signs
+   the one-time tokens behind the notification's Done/Snooze buttons. If
+   using Web Push, also add `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and
+   `VAPID_SUBJECT`.
 3. That's it — `.github/workflows/tick.yml` is already in the repo and runs
    automatically every 5 minutes, checking for due tasks and pushing to ntfy.
 4. To test it immediately rather than waiting: go to the repo's **Actions**
@@ -97,16 +106,49 @@ delivery ever matters, the fix is an external scheduler (e.g. a free cron
 service) hitting a tick endpoint instead of relying on GitHub Actions'
 `schedule` trigger.
 
+## Installing it as an app (PWA)
+
+Yappr has a web app manifest and a service worker, so it can be added to
+your phone's home screen like a real app: open it in Safari (iPhone) or
+Chrome (Android), then **Share → Add to Home Screen**. It opens fullscreen
+with its own icon, no browser address bar.
+
+## Web Push (optional)
+
+Alongside ntfy, Yappr can send native browser push notifications - the kind
+that work even when no tab is open, using each browser's own push service.
+On iPhone this requires iOS 16.4+ *and* the app added to your Home Screen
+(Safari doesn't support push in a regular tab).
+
+To enable it:
+
+1. Generate a key pair once: `node -e "console.log(require('web-push').generateVAPIDKeys())"`
+2. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT`
+   (`mailto:you@example.com`) on both Vercel and the GitHub Actions secrets.
+3. Open the app and tap **Enable** on the notifications banner - this both
+   grants browser notification permission and (silently) subscribes the
+   device to Web Push.
+
+Leave the `VAPID_*` variables unset to skip this entirely - ntfy keeps
+working as the primary channel either way, and doesn't need any of this
+setup.
+
 ## How it works
 
 - Add a task with a due time, optional daily repeat, and how often (in
   minutes) it should re-nag you.
 - Every 5 minutes, a GitHub Actions workflow (`scripts/tick.js`) checks for
-  anything due and not done, and sends a push to your ntfy topic if enough
-  time has passed since the last nag.
-- The web page (when open) does its own check every 20s and fires a native
-  browser notification in sync with the same due tasks.
+  anything due and not done, and sends a push to your ntfy topic (plus a
+  Web Push notification, if configured) if enough time has passed since the
+  last nag.
+- The ntfy notification includes **Done** and **Snooze 15m** action buttons
+  that call the API directly, using a one-time signed token scoped to that
+  task and action - no need to open the app to act on a reminder.
+- The web page (when open) does its own check every 60s (paused while the
+  tab is hidden) and fires a native browser notification in sync with the
+  same due tasks.
 - Marking a one-off task done just marks it done. Marking a daily task done
-  rolls its due time forward by 24 hours and resets the nag timer.
+  rolls its due time forward in whole-day steps until it's back in the
+  future (so a task missed for 3 days lands on tomorrow, not still overdue).
 - Logins use a signed cookie (no server-side session storage), which is what
   makes the web app safe to run on Vercel's serverless functions.
