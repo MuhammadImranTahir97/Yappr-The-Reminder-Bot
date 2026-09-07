@@ -114,6 +114,16 @@ input, textarea, select, button {
   border-radius: 8px;
   background: transparent;
   color: var(--text);
+  width: 100%;
+  min-width: 0;
+}
+
+/* datetime-local's intrinsic content width can exceed its flex item's
+   min-width, overflowing into the next field instead of wrapping - stack
+   the row on narrow screens instead of trying to shrink it. */
+@media (max-width: 480px) {
+  .row { flex-direction: column; }
+  .row label { min-width: 0; }
 }
 
 button[type="submit"] {

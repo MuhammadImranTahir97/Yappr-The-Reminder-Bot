@@ -100,11 +100,21 @@ the Actions tab and re-enable the workflow there if needed.
 run every 5 minutes, but GitHub explicitly reserves the right to delay or
 skip scheduled runs under load, especially on free-tier repos — in practice
 this project has seen gaps of 2+ hours between runs instead of 5 minutes.
-Reminders may arrive later than the `nagMinutes` setting implies. There's no
-free way to force GitHub to run more punctually; if reliable sub-5-minute
-delivery ever matters, the fix is an external scheduler (e.g. a free cron
-service) hitting a tick endpoint instead of relying on GitHub Actions'
-`schedule` trigger.
+Reminders may arrive later than the `nagMinutes` setting implies.
+
+### 5c. (Optional, recommended) A punctual external cron trigger
+
+To get real 5-minute delivery instead of GitHub's best-effort schedule,
+point a free external cron service at the app itself:
+
+1. Generate a token: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+2. Add `CRON_TOKEN` (that value) to Vercel's Environment Variables and redeploy.
+3. Sign up free at [cron-job.org](https://cron-job.org) (no card needed) and
+   create a job that does a `GET` request every 5 minutes to:
+   `https://your-app.vercel.app/api/cron-tick?token=<your CRON_TOKEN>`
+4. Leave the GitHub Actions workflow running too - it's harmless as a
+   backup (the per-task nag interval already prevents most double-sends),
+   and still protects against the external service itself going down.
 
 ## Installing it as an app (PWA)
 
@@ -139,12 +149,15 @@ setup.
   and an optional repeat: daily, weekly, weekdays only, or every N days.
 - Active tasks are grouped into **Today / Tomorrow / Later**, and each one
   shows when its next nag will fire.
-- Every 5 minutes, a GitHub Actions workflow (`scripts/tick.js`) checks for
-  anything due and not done, and sends a push to your ntfy topic (plus a
-  Web Push notification, if configured) if enough time has passed since the
-  last nag. It also deletes completed one-off tasks whose due date is 30+
-  days old, and (if `QUIET_HOURS_START`/`QUIET_HOURS_END` are set) skips
-  nagging during that window without disturbing the task's own schedule.
+- The same nag-check logic runs from two places: a GitHub Actions workflow
+  (`scripts/tick.js`, every 5 minutes but best-effort) and, if you set up
+  section 5c, an external cron service hitting `GET /api/cron-tick` on the
+  live deployment (punctual). Either way it checks for anything due and not
+  done, and sends a push to your ntfy topic (plus a Web Push notification,
+  if configured) if enough time has passed since the last nag. It also
+  deletes completed one-off tasks whose due date is 30+ days old, and (if
+  `QUIET_HOURS_START`/`QUIET_HOURS_END` are set) skips nagging during that
+  window without disturbing the task's own schedule.
 - The ntfy notification includes **Done** and **Snooze 15m** action buttons
   that call the API directly, using a one-time signed token scoped to that
   task and action - no need to open the app to act on a reminder. The web

@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const { pool, init } = require('./db');
 const scheduler = require('./scheduler');
+const { runTick } = require('./nag');
 const { isEnabled: pushEnabled } = require('./webpush');
 const { verifyActionToken } = require('./actionTokens');
 const { normalizeRecurring, nextOccurrence } = require('./recurrence');
@@ -126,6 +127,19 @@ app.get('/api/health', asyncHandler(async (req, res) => {
     `SELECT COUNT(*) FROM tasks WHERE done = false AND due_at <= now()`
   );
   res.json({ ok: true, tasksDue: Number(rows[0].count) });
+}));
+
+// Lets an external scheduler (e.g. cron-job.org, free, no card) call this
+// deployment directly every few minutes for punctual nagging - GitHub
+// Actions' own `schedule` trigger is best-effort and can run hours late
+// under load. Token-gated instead of behind requireAuth, since an external
+// cron service has no way to hold a login cookie.
+app.get('/api/cron-tick', asyncHandler(async (req, res) => {
+  if (!process.env.CRON_TOKEN || !safeEqual(req.query.token || '', process.env.CRON_TOKEN)) {
+    return res.status(403).json({ error: 'invalid or missing token' });
+  }
+  await runTick();
+  res.json({ ok: true });
 }));
 
 app.get('/login.js', (req, res) => {
