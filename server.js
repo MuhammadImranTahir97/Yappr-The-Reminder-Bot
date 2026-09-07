@@ -138,6 +138,7 @@ app.get('/api/cron-tick', asyncHandler(async (req, res) => {
   if (!process.env.CRON_TOKEN || !safeEqual(req.query.token || '', process.env.CRON_TOKEN)) {
     return res.status(403).json({ error: 'invalid or missing token' });
   }
+  await init();
   await runTick();
   res.json({ ok: true });
 }));
